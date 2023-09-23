@@ -1,0 +1,160 @@
+# Practical Machine Learning Course Project
+
+## Synopsis
+Personal fitness tracking devices collect a large amount of data about the activity of the wearer. Data was measured from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+This project aims to predict whether a set of measured exercises was done correctly (A), or done incorrectly, of which there are four different categories (C through E). Random Forest and Boosting using Trees are effective algorithms that were used; the estimated out of sample error rates were 0.64% and 4.18% respectively. Ultimately, the test set of data was predicted using the Random Forest method and the predictions can be found at the end of the document.
+
+## Dataset
+- The training dataset can be found [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv).
+- The testing dataset can be found [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv).
+
+A description of the dataset can be found in the appendix.
+
+## Cleaning Data
+```{r, echo = F, message = F}
+library(caret); library(corrplot); library(dplyr)
+
+trainingurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testingurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+if (!file.exists("./data")) {
+  dir.create("./data")
+}
+if (!file.exists("./data/training.csv")){
+        download.file(trainingurl, "./data/training.csv")
+}
+if (!file.exists("testing.csv")){
+        download.file(testingurl, "./data/testing.csv")
+}
+
+trainingRaw <- read.csv('./data/training.csv')
+testingRaw <- read.csv('./data/testing.csv')
+```
+Please see appendix for R environment setup. The training and test datasets are read and assigned to `trainingRaw` and `testingRaw` data frames respectively. An initial look at the dimensions of `trainingRaw` and `testingRaw`:
+```{r}
+dim(trainingRaw)
+dim(testingRaw)
+```
+`trainingRaw` has 19622 observations of 160 variables, and `testingRaw` has 20 observations of 160 variables. The `classe` variable in `trainingRaw` is the outcome for prediction. This variable is replaced by `problem_id` in `testingRaw`. See appendix for full list of variable names. 
+
+Then, the following cleaning operations were performed, with code in the appendix:
+
+1. The first seven variables are unrelated to the measurements taken by the accelerometers, and are removed. The resulting dataframes are assigned to `training` and `testing` data frames.
+2. Variables with near zero variability were removed.
+3. Variables with all NA values were removed.
+
+```{r, echo = F}
+training <- trainingRaw[,-(1:7)]
+testing <- testingRaw[,-(1:7)]
+
+nsv <- nearZeroVar(training)
+training <- training[, -nsv]
+testing  <- testing[, -nsv]
+
+training <- select(training, where(function(x) sum(is.na(x)) == 0))
+testing <- select(testing, where(function(x) sum(is.na(x)) == 0))
+```
+
+```{r}
+dim(training)
+dim(testing)
+```
+Both sets have had their amount of variables reduced to 53.
+
+## Correlation Matrix
+
+A correlation matrix between the 52 potential indicator variables is plotted.
+```{r, fig.width = 8, fig.height = 8, fig.align = 'center'}
+corrMatrix <- cor(training[, -53])
+corrplot(corrMatrix, order = "FPC", method = "color", type = "lower", 
+         tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+```
+
+There does not appear to be many highly correlated variables, so PCA will not be performed.
+
+## Data Slicing
+
+`training` will be split 80% into a sub-training set `subtraining`, and the remaining 20% as a validation set `validation` for the predictive models.
+```{r}
+set.seed(33233)
+inTrain <- createDataPartition(training$classe, p=0.80, list=F)
+subtraining <- training[inTrain,]
+validation <- training[-inTrain,]
+dim(subtraining)
+dim(validation)
+```
+The dimensions of each are as above.
+
+## Prediction Modelling
+
+The purposes of this project, scalability and interpretability of the models are not a priority. And given the 53 of indicator variables, random forests and boosting with trees are well-suited for use. Both methods will use 5-fold cross validation; Typically the number of folds is between 5 to 10, which show an optimal balance between bias and variance. A lower amount of folds was selected for the sake of computation time.
+
+### Random Forest
+```{r, cache = TRUE}
+cvcontrol <- trainControl(method="cv", 5)
+rfModel <- train(classe ~ ., data = subtraining, method="rf", trControl=cvcontrol)
+rfModel
+```
+
+Then calculate accuracy of prediction on the validation set. This will be compared to the boosted model.
+```{r}
+rfPredict <- predict(rfModel, validation)
+confusionMatrix(factor(validation$classe), rfPredict)
+```
+
+The random forest model has a 99.36% accuracy rate. Thus we can expect our out of sample error rate to be close to, but higher than 0.64%.
+
+### Boosting with Trees
+```{r, cache = T}
+gbmModel <- train(classe~., subtraining, method = 'gbm', trControl=cvcontrol, verbose = F)
+gbmModel
+```
+
+Then calculate accuracy of prediction on the validation set.
+```{r}
+gbmPredict <- predict(gbmModel, validation)
+confusionMatrix(factor(validation$classe), gbmPredict)
+```
+
+The boosted model has a 95.82% accuracy rate. Thus we can expect our out of sample error rate to be close to, but higher than 4.18%. Comparing rates, the random forest model will be selected to use with the test set.
+
+### Prediction
+Fit `testing` to the random forest model, removing the `problem_id` variable, which is not needed.
+```{r}
+prediction <- predict(rfModel, testing[,-53])
+prediction
+```
+
+## Appendix
+### Dataset Description
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate. The exercises were performed by six male participants aged between 20-28 years, with little weight lifting experience. We made sure that all participants could easily simulate the mistakes in a safe and controlled manner by using a relatively light dumbbell (1.25kg).
+
+### R Environment
+```{r, eval = F}
+library(caret); library(corrplot); library(dplyr)
+```
+
+### Variable Names
+```{r}
+names(trainingRaw)
+```
+Return names in testingRaw that are not present in trainingRaw
+```{r}
+names(testingRaw[names(testingRaw) != names(trainingRaw)])
+```
+
+### Cleaning
+```{r, eval = F}
+training <- trainingRaw[,-(1:7)]
+testing <- testingRaw[,-(1:7)]
+
+nsv <- nearZeroVar(training)
+training <- training[, -nsv]
+testing  <- testing[, -nsv]
+
+training <- select(training, where(function(x) sum(is.na(x)) == 0))
+testing <- select(testing, where(function(x) sum(is.na(x)) == 0))
+```
